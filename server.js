@@ -35,6 +35,14 @@ const connectDB = async () => {
 
 connectDB();
 
+// Dev Mode Configuration
+const DEV_MODE = process.env.DEV_MODE === 'true';
+const DEV_EMAILS = process.env.DEV_EMAILS ? process.env.DEV_EMAILS.split(',').map(email => email.trim().toLowerCase()) : [];
+
+console.log('🔧 Dev Mode Configuration:');
+console.log('   DEV_MODE:', DEV_MODE);
+console.log('   DEV_EMAILS:', DEV_EMAILS);
+
 // Submission Schema
 const submissionSchema = new mongoose.Schema({
   accreditationId: {
@@ -98,6 +106,24 @@ function generateAccreditationId() {
   const timestamp = Date.now().toString(36);
   const random = Math.random().toString(36).substring(2, 7);
   return `UI-SUG-${timestamp}-${random}`.toUpperCase();
+}
+
+// ==================== DEV MODE HELPER FUNCTIONS ====================
+
+/**
+ * Check if email should bypass duplicate restrictions (dev mode)
+ */
+function shouldBypassDuplicate(email, forceEmail) {
+  if (forceEmail) return true;
+  if (DEV_MODE && DEV_EMAILS.includes(email.toLowerCase())) return true;
+  return false;
+}
+
+/**
+ * Check if email is a dev email
+ */
+function isDevEmail(email) {
+  return DEV_MODE && DEV_EMAILS.includes(email.toLowerCase());
 }
 
 // ==================== EMAIL TEMPLATES ====================
@@ -222,12 +248,20 @@ function confirmationEmailTemplate(submission) {
           color: #1e40af;
           margin-bottom: 10px;
         }
+        .dev-mode-badge {
+          background-color: #f59e0b;
+          color: white;
+          padding: 4px 8px;
+          border-radius: 4px;
+          font-size: 12px;
+          margin-left: 8px;
+        }
       </style>
     </head>
     <body>
       <div class="container">
         <div class="header">
-          <h1>✓ ACCREDITATION CONFIRMED</h1>
+          <h1>✓ ACCREDITATION CONFIRMED ${submission.devOverride ? '<span class="dev-mode-badge">DEV MODE</span>' : ''}</h1>
           <p>University of Ibadan Student Union Election</p>
         </div>
         
@@ -289,6 +323,15 @@ function confirmationEmailTemplate(submission) {
             </ul>
           </div>
 
+          ${submission.devOverride ? `
+          <div class="important-note">
+            <strong style="color: #d97706;">🔧 Development Mode Active:</strong> 
+            <p style="margin: 8px 0 0 0; color: #92400e;">
+              This email was sent in Development Mode. Duplicate prevention has been bypassed for testing purposes.
+            </p>
+          </div>
+          ` : ''}
+
           <div class="important-note">
             <strong style="color: #d97706;">Important Notice:</strong> 
             <p style="margin: 8px 0 0 0; color: #92400e;">
@@ -327,7 +370,9 @@ async function sendConfirmationEmail(submission) {
     const { data, error } = await resend.emails.send({
       from: 'UI Electoral Commission <noreply@iykevisualsdev.me>',
       to: [submission.email],
-      subject: 'UI Student Union Election - Accreditation Confirmed',
+      subject: submission.devOverride ? 
+        '🔧 [DEV] UI Student Union Election - Accreditation Confirmed' : 
+        'UI Student Union Election - Accreditation Confirmed',
       html: confirmationEmailTemplate(submission)
     });
 
@@ -353,11 +398,13 @@ app.get('/health', (req, res) => {
     status: 'OK', 
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
-    mongodb: mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected'
+    mongodb: mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected',
+    devMode: DEV_MODE,
+    devEmails: DEV_EMAILS
   });
 });
 
-// Main form submission endpoint
+// Main form submission endpoint with Dev Mode support
 app.post('/form-submission', async (req, res) => {
   const startTime = Date.now();
   
@@ -365,7 +412,7 @@ app.post('/form-submission', async (req, res) => {
     console.log('\n🎓 NEW FORM SUBMISSION');
     console.log('📥 Received data:', JSON.stringify(req.body, null, 2));
     
-    const { name, email, studentId, faculty, department, level, phoneNumber } = req.body;
+    const { name, email, studentId, faculty, department, level, phoneNumber, forceEmail } = req.body;
     
     // Validate required fields
     if (!name || !email) {
@@ -376,43 +423,70 @@ app.post('/form-submission', async (req, res) => {
       });
     }
 
+    const normalizedEmail = email.trim().toLowerCase();
+    
     // Check for duplicate email
-    const existingSubmission = await Submission.findOne({ email });
-    if (existingSubmission) {
-      console.log('⚠️ Duplicate submission detected for:', email);
+    const existingSubmission = await Submission.findOne({ email: normalizedEmail });
+    
+    // DEV MODE: Check if we should bypass duplicate restrictions
+    const shouldBypass = shouldBypassDuplicate(normalizedEmail, forceEmail);
+    const isDevEmail = isDevEmail(normalizedEmail);
+    
+    if (existingSubmission && !shouldBypass) {
+      console.log('⚠️ Duplicate submission detected for:', normalizedEmail);
       return res.status(200).json({
         success: true,
         accreditationId: existingSubmission.accreditationId,
         message: 'Already registered',
+        emailSent: false,
         isDuplicate: true
       });
     }
     
     // Generate accreditation ID
-    const accreditationId = generateAccreditationId();
-    console.log('🆔 Generated Accreditation ID:', accreditationId);
+    const accreditationId = existingSubmission ? existingSubmission.accreditationId : generateAccreditationId();
     
-    // Create submission
-    const submission = new Submission({
-      accreditationId,
-      name: name.trim(),
-      email: email.trim().toLowerCase(),
-      studentId: studentId || '',
-      faculty: faculty || '',
-      department: department || '',
-      level: level || '',
-      phoneNumber: phoneNumber || '',
-      status: 'pending',
-      emailSent: false,
-      submittedAt: new Date()
-    });
+    if (existingSubmission && shouldBypass) {
+      console.log('🔧 DEV MODE: Bypassing duplicate restriction for:', normalizedEmail);
+      console.log('🆔 Using existing Accreditation ID:', accreditationId);
+    } else {
+      console.log('🆔 Generated Accreditation ID:', accreditationId);
+    }
+    
+    let submission;
+    
+    if (existingSubmission && shouldBypass) {
+      // Use existing submission but mark for dev override
+      submission = existingSubmission;
+      submission.devOverride = true;
+    } else {
+      // Create new submission
+      submission = new Submission({
+        accreditationId,
+        name: name.trim(),
+        email: normalizedEmail,
+        studentId: studentId || '',
+        faculty: faculty || '',
+        department: department || '',
+        level: level || '',
+        phoneNumber: phoneNumber || '',
+        status: 'pending',
+        emailSent: false,
+        submittedAt: new Date()
+      });
+    }
     
     // Save to database
     await submission.save();
     console.log('💾 Submission saved to database');
     
-    // Send confirmation email IMMEDIATELY (don't wait for anything else)
-    const emailResult = await sendConfirmationEmail(submission);
+    // Send confirmation email
+    const emailData = {
+      ...submission.toObject(),
+      devOverride: shouldBypass
+    };
+    
+    const emailResult = await sendConfirmationEmail(emailData);
     
     // Update email status
     if (emailResult.success) {
@@ -431,8 +505,12 @@ app.post('/form-submission', async (req, res) => {
     res.status(200).json({
       success: true,
       accreditationId: submission.accreditationId,
-      message: 'Registration successful',
+      message: existingSubmission && shouldBypass ? 
+        'Already registered - Email forced for dev testing' : 
+        'Registration successful',
       emailSent: emailResult.success,
+      isDuplicate: !!existingSubmission,
+      devOverride: shouldBypass,
       processingTime: `${processingTime}ms`
     });
     
@@ -528,6 +606,15 @@ app.post('/retry-email/:accreditationId', async (req, res) => {
   }
 });
 
+// Dev mode status endpoint
+app.get('/dev-mode', (req, res) => {
+  res.status(200).json({
+    devMode: DEV_MODE,
+    devEmails: DEV_EMAILS,
+    enabled: DEV_MODE && DEV_EMAILS.length > 0
+  });
+});
+
 // 404 handler
 app.use((req, res) => {
   res.status(404).json({ 
@@ -552,5 +639,7 @@ app.listen(PORT, () => {
   console.log(`\n🚀 Server running on port ${PORT}`);
   console.log(`📍 Health check: http://localhost:${PORT}/health`);
   console.log(`📝 Form endpoint: http://localhost:${PORT}/form-submission`);
+  console.log(`🔧 Dev Mode: ${DEV_MODE ? 'ENABLED' : 'DISABLED'}`);
+  console.log(`📧 Dev Emails: ${DEV_EMAILS.join(', ') || 'None'}`);
   console.log(`⏰ Started at: ${new Date().toISOString()}\n`);
 });
