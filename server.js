@@ -43,6 +43,24 @@ console.log('🔧 Dev Mode Configuration:');
 console.log('   DEV_MODE:', DEV_MODE);
 console.log('   DEV_EMAILS:', DEV_EMAILS);
 
+// ==================== DEV MODE HELPER FUNCTIONS ====================
+
+/**
+ * Check if email should bypass duplicate restrictions (dev mode)
+ */
+function shouldBypassDuplicate(email, forceEmail) {
+  if (forceEmail) return true;
+  if (DEV_MODE && DEV_EMAILS.includes(email.toLowerCase())) return true;
+  return false;
+}
+
+/**
+ * Check if email is a dev email
+ */
+function isDevEmail(email) {
+  return DEV_MODE && DEV_EMAILS.includes(email.toLowerCase());
+}
+
 // Submission Schema
 const submissionSchema = new mongoose.Schema({
   accreditationId: {
@@ -106,24 +124,6 @@ function generateAccreditationId() {
   const timestamp = Date.now().toString(36);
   const random = Math.random().toString(36).substring(2, 7);
   return `UI-SUG-${timestamp}-${random}`.toUpperCase();
-}
-
-// ==================== DEV MODE HELPER FUNCTIONS ====================
-
-/**
- * Check if email should bypass duplicate restrictions (dev mode)
- */
-function shouldBypassDuplicate(email, forceEmail) {
-  if (forceEmail) return true;
-  if (DEV_MODE && DEV_EMAILS.includes(email.toLowerCase())) return true;
-  return false;
-}
-
-/**
- * Check if email is a dev email
- */
-function isDevEmail(email) {
-  return DEV_MODE && DEV_EMAILS.includes(email.toLowerCase());
 }
 
 // ==================== EMAIL TEMPLATES ====================
@@ -430,7 +430,7 @@ app.post('/form-submission', async (req, res) => {
     
     // DEV MODE: Check if we should bypass duplicate restrictions
     const shouldBypass = shouldBypassDuplicate(normalizedEmail, forceEmail);
-    const isDevEmail = isDevEmail(normalizedEmail);
+    const isDevEmailFlag = isDevEmail(normalizedEmail);
     
     if (existingSubmission && !shouldBypass) {
       console.log('⚠️ Duplicate submission detected for:', normalizedEmail);
