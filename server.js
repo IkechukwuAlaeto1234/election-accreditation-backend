@@ -33,9 +33,13 @@ const submissionSchema = new mongoose.Schema({
     type: String,
     required: true
   },
-  studentId: String,
-  department: String,
-  level: String,
+  studentId: { type: String, required: true },
+  faculty: {
+    type: String,
+    required: true
+  },
+  department: { type: String, required: true },
+  level: { type: String, required: true },
   phoneNumber: String,
   status: {
     type: String,
@@ -1005,7 +1009,7 @@ app.post('/form-submission', async (req, res) => {
   try {
     console.log('Received form submission:', req.body);
 
-    const { name, email, studentId, department, level, phoneNumber } = req.body;
+    const { name, email, studentId, faculty, department, level, phoneNumber } = req.body;
 
     // Validate required fields
     if (!name || !email) {
@@ -1022,6 +1026,14 @@ app.post('/form-submission', async (req, res) => {
         status: 'error', 
         message: 'Invalid email format' 
       });
+
+    // Validate matric format (6 digits)
+    if (!/^\d{6}$/.test(studentId)) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Matric number must be exactly 6 digits'
+      });
+    }
     }
 
     // Generate accreditation ID
@@ -1032,7 +1044,8 @@ app.post('/form-submission', async (req, res) => {
       accreditationId,
       name,
       email,
-      studentId: studentId || 'Not provided',
+      studentId: studentId,
+      faculty: faculty || 'Not provided',
       department: department || 'Not provided',
       level: level || 'Not provided',
       phoneNumber: phoneNumber || 'Not provided',
