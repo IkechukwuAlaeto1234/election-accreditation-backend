@@ -1028,12 +1028,13 @@ app.post('/form-submission', async (req, res) => {
       });
 
     // Validate matric format (6 digits)
-    if (!/^\d{6}$/.test(studentId)) {
+    if (studentId && !/^\d{6}$/.test(studentId)) {
       return res.status(400).json({
         status: 'error',
         message: 'Matric number must be exactly 6 digits'
       });
     }
+
     }
 
     // Generate accreditation ID
